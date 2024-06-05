@@ -6,6 +6,7 @@
 #include <Wire.h>
 #include <Bonezegei_ULN2003_Stepper.h>
 #include <AHT10.h>
+#include <LiquidCrystal_I2C.h>
 
 #define DHT_TYPE DHT11
 #define DHT11PIN 16
@@ -23,12 +24,19 @@ const char* nonEnterpriseWifiPassword = NON_ENTERPRISE_WIFI_PASSWORD;
 Bonezegei_ULN2003_Stepper Stepper(15, 2, 4, 5);
 Adafruit_MPU6050 mpu;
 AHT10 myAHT10(AHT10_ADDRESS_0X38);
+LiquidCrystal_I2C lcd(0x27,20,4);
 
 unsigned long previousMillis = 0;
 const long interval = 2000;
 
 void setup() {
   Serial.begin(115200);
+  lcd.init();                      // initialize the lcd 
+  lcd.backlight();
+  lcd.setCursor(0,0);
+  lcd.print("Machine is on");
+  // lcd.println("Processing...");
+  // delay(5000); lcd.clear();
   while (!Serial)
     delay(10); // will pause until serial console opens
 
@@ -159,7 +167,9 @@ void loop() {
 
   Serial.println("");
 
-  delay(500);
+  delay(100);
+
+
 }
 
 
