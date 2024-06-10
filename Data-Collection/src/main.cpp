@@ -3,10 +3,11 @@
 #include <Arduino.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-#include <Wire.h>
 #include <Bonezegei_ULN2003_Stepper.h>
 #include <AHT10.h>
 #include <LiquidCrystal_I2C.h>
+#include "time.h"
+#include "DataSender.h"
 
 #define DHT_TYPE DHT11
 #define DHT11PIN 16
@@ -20,27 +21,59 @@ const char* ucsdPid = UCSD_PID;
 const char* espLocation = ESP_LOCATION;
 const char* wifiSsid = WIFI_SSID;
 const char* nonEnterpriseWifiPassword = NON_ENTERPRISE_WIFI_PASSWORD;
+const char* homewifi = "Sun";
 
-Bonezegei_ULN2003_Stepper Stepper(15, 2, 4, 5);
+
+// DataSender dataSender(ucsdPid, espLocation, serverUrl);
+Bonezegei_ULN2003_Stepper Stepper(13, 12, 14, 27);
 Adafruit_MPU6050 mpu;
 AHT10 myAHT10(AHT10_ADDRESS_0X38);
 LiquidCrystal_I2C lcd(0x27,20,4);
+DataSender* data_sender = nullptr;
 
 unsigned long previousMillis = 0;
 const long interval = 2000;
+
+// Button pins
+const int buttonModePin = 15;
+const int buttonIncrementPin = 4;
+const int buttonEnPin = 5;
+
+int setHour = 0;
+int setMinute = 0;
+bool isSet = false;
+bool settingHour = false; // true if setting hour, false if setting minute
+
+int lastButtonIncrementState = LOW;
+int lastButtonEnState = LOW;
+
+unsigned long lastLcdUpdateTime = 0; // For non-blocking LCD updates
+const long lcdUpdateInterval = 60000; // Update LCD every second
+
+unsigned long lastSensorUpdateTime = 0; // For non-blocking LCD updates
+const long sensorUpdateInterval = 60000; // Update LCD every second
+
+const float vibrationThreshold = 15; // Define your vibration threshold
+bool lastVibrationState = false;
 
 void setup() {
   Serial.begin(115200);
   lcd.init();                      // initialize the lcd 
   lcd.backlight();
   lcd.setCursor(0,0);
-  lcd.print("Machine is on");
+  lcd.print("Connecting to wifi...");
+  lcd.setCursor(0, 1);
+  lcd.print("Set Time: None");
   // lcd.println("Processing...");
   // delay(5000); lcd.clear();
-  while (!Serial)
-    delay(10); // will pause until serial console opens
 
-  Serial.println("Adafruit MPU6050 test!");
+  // dataSender.connectToWiFi(wifiSsid, nonEnterpriseWifiPassword);
+  data_sender = new DataSender(ucsdPid, "RIMAC", serverUrl);
+  // data_sender->connectToWPAEnterprise(wifiSsid, ucsdUsername, ucsdPassword);
+  data_sender->connectToWiFi(homewifi, "12345678");
+
+  // while (!Serial)
+  //   delay(10); // will pause until serial console opens
 
   // Try to initialize!
   if (!mpu.begin()) {
@@ -48,71 +81,6 @@ void setup() {
     while (1) {
       delay(10);
     }
-  }
-  Serial.println("MPU6050 Found!");
-  
-
-  Serial.println(F("AHT10 OK"));
-
-
-  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-  Serial.print("Accelerometer range set to: ");
-  switch (mpu.getAccelerometerRange()) {
-  case MPU6050_RANGE_2_G:
-    Serial.println("+-2G");
-    break;
-  case MPU6050_RANGE_4_G:
-    Serial.println("+-4G");
-    break;
-  case MPU6050_RANGE_8_G:
-    Serial.println("+-8G");
-    break;
-  case MPU6050_RANGE_16_G:
-    Serial.println("+-16G");
-    break;
-  }
-
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  Serial.print("Gyro range set to: ");
-  switch (mpu.getGyroRange()) {
-  case MPU6050_RANGE_250_DEG:
-    Serial.println("+- 250 deg/s");
-    break;
-  case MPU6050_RANGE_500_DEG:
-    Serial.println("+- 500 deg/s");
-    break;
-  case MPU6050_RANGE_1000_DEG:
-    Serial.println("+- 1000 deg/s");
-    break;
-  case MPU6050_RANGE_2000_DEG:
-    Serial.println("+- 2000 deg/s");
-    break;
-  }
-
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-  Serial.print("Filter bandwidth set to: ");
-  switch (mpu.getFilterBandwidth()) {
-  case MPU6050_BAND_260_HZ:
-    Serial.println("260 Hz");
-    break;
-  case MPU6050_BAND_184_HZ:
-    Serial.println("184 Hz");
-    break;
-  case MPU6050_BAND_94_HZ:
-    Serial.println("94 Hz");
-    break;
-  case MPU6050_BAND_44_HZ:
-    Serial.println("44 Hz");
-    break;
-  case MPU6050_BAND_21_HZ:
-    Serial.println("21 Hz");
-    break;
-  case MPU6050_BAND_10_HZ:
-    Serial.println("10 Hz");
-    break;
-  case MPU6050_BAND_5_HZ:
-    Serial.println("5 Hz");
-    break;
   }
 
   //Inititalize Pins
@@ -122,10 +90,14 @@ void setup() {
   // Default Value is 3 
   Stepper.setSpeed(5);
 
-  Serial.println("");
-  delay(100);
+    // Initialize button pins
+  pinMode(buttonModePin, INPUT_PULLUP);
+  pinMode(buttonIncrementPin, INPUT_PULLUP);
+  pinMode(buttonEnPin, INPUT_PULLUP);
 
-
+  lcd.clear();
+  lcd.setCursor(0, 1);
+  lcd.print("Set Time: None");
 }
 
 void loop() {
@@ -133,42 +105,94 @@ void loop() {
   unsigned long currentMillis = millis();
   sensors_event_t a, g, temp;
   mpu.getEvent(&a, &g, &temp);
+  // Button handling
+  int buttonModeState = digitalRead(buttonModePin);
+  int buttonIncrementState = digitalRead(buttonIncrementPin);
+  int buttonEnState = digitalRead(buttonEnPin);
 
-  if (currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis;
-    Stepper.step(FORWARD, 1000);
+  if (buttonModeState == HIGH) {
+    settingHour = true;
+  } else {
+    settingHour = false;
   }
+
+  if((buttonEnState != lastButtonEnState) && (buttonEnState == HIGH)) {
+    isSet = true;
+  }
+  lastButtonEnState = buttonEnState;
+
+  if ((buttonEnState == LOW) && (buttonIncrementState != lastButtonIncrementState) && (buttonIncrementState == LOW)) {
+    if (settingHour) {
+      setHour = (setHour + 1) % 24;
+    } else {
+      setMinute = (setMinute + 5) % 60;
+    }
+    lcd.setCursor(10, 1);
+    lcd.print(setHour < 10 ? "0" : ""); lcd.print(setHour); lcd.print(":");
+    lcd.print(setMinute < 10 ? "0" : ""); lcd.print(setMinute); lcd.print(" ");
+  }
+  lastButtonIncrementState = buttonIncrementState;
+
+  char setTime[5];
+  // Display set time on LCD
+  if (currentMillis - lastLcdUpdateTime >= lcdUpdateInterval) {
+    data_sender->sendLocalTime();
+    String localTime = data_sender->getTimeOnly();
+    lastLcdUpdateTime = currentMillis; 
+    lcd.setCursor(0, 0);
+    lcd.print(localTime);
+    sprintf(setTime, "%02d:%02d", setHour, setMinute);
+    if (isSet && (strcmp(localTime.c_str(), setTime) == 0)){
+      Stepper.step(FORWARD, 500);
+      delay(3000);
+      Stepper.step(REVERSE, 500);
+      isSet = false;
+    }
+  }
+
+
+  // if (currentMillis - previousMillis >= interval) {
+  //   previousMillis = currentMillis;
+  //   Stepper.step(FORWARD, 1000);
+  // }
 
   // Stepper.step(REVERSE, 2000);
   // delay(2000);
 
-  /* Print out the values */
-  Serial.print("Acceleration X: ");
-  Serial.print(a.acceleration.x);
-  Serial.print(", Y: ");
-  Serial.print(a.acceleration.y);
-  Serial.print(", Z: ");
-  Serial.print(a.acceleration.z);
-  Serial.println(" m/s^2");
+ 
+  if (currentMillis - lastSensorUpdateTime >= sensorUpdateInterval) {
+     /* Print out the values */
+    Serial.print("Acceleration X: ");
+    Serial.print(a.acceleration.x);
+    Serial.print(", Y: ");
+    Serial.print(a.acceleration.y);
+    Serial.print(", Z: ");
+    Serial.print(a.acceleration.z);
+    Serial.println(" m/s^2");
 
-  Serial.print("Rotation X: ");
-  Serial.print(g.gyro.x);
-  Serial.print(", Y: ");
-  Serial.print(g.gyro.y);
-  Serial.print(", Z: ");
-  Serial.print(g.gyro.z);
-  Serial.println(" rad/s");
 
-  Serial.print("Temperature: ");
-  Serial.print(temp.temperature);
-  Serial.println(" degC");
+    Serial.print("Temperature: ");
+    Serial.print(temp.temperature);
+    Serial.println(" degC");
 
-  Serial.print(F("Humidity...: ")); Serial.print(myAHT10.readHumidity());    Serial.println(F(" +-2%"));   //by default "AHT10_FORCE_READ_DATA"
+    Serial.print(F("Humidity...: ")); Serial.print(myAHT10.readHumidity());    Serial.println(F(" +-2%"));   //by default "AHT10_FORCE_READ_DATA"
 
-  Serial.println("");
+    Serial.println("");
 
-  delay(100);
 
+    // Check for vibration
+    bool isVibrating = abs(a.acceleration.x) > vibrationThreshold ||
+                     abs(a.acceleration.y) > vibrationThreshold ||
+                     abs(a.acceleration.z) > vibrationThreshold;
+
+
+    // Send ON/OFF signal if the vibration state changes
+    if (isVibrating != lastVibrationState) {
+      lastVibrationState = isVibrating;
+      String signal = isVibrating ? "ON" : "OFF";
+      data_sender->sendData("Vibration", "Accelerometer", isVibrating ? 1 : 0, signal);
+    }
+  }
 
 }
 

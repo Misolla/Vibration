@@ -1,6 +1,7 @@
 {
     "cmake.sourceDirectory": "/Users/dom500d/Documents/ECE-140A/wi24-ta7/Data-Collection/.pio/libdeps/upesy_wroom/Adafruit BusIO",
     "files.associations": {
-        "*.tcc": "cpp"
+        "*.tcc": "cpp",
+        "string": "cpp"
     }
 }
